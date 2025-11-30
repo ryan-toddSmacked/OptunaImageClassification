@@ -1,0 +1,143 @@
+optuna:
+  study_name: image_classification_study
+  direction: maximize
+  sampler:
+    type: TPESampler
+  pruner:
+    type: MedianPruner
+
+  base_output_dir: ./optuna_study_results # Directory to save study results and plots and checkpoints
+  
+  image_database_path: ./mnist_images # Path to the image dataset, subfolders should represent class labels
+
+  input_image_size: [28, 28]  # Input image size as [height, width]
+
+  input_image_channels: 1  # Number of channels in the input images (1 for grayscale, 3 for RGB)
+
+  max_samples: 200  # Maximum number of samples to use (null = use all data). Set to a number like 5000 for faster experimentation
+
+  max_inbalance_ratio: 5.0  # Maximum allowed class imbalance ratio (majority_class_size / minority_class_size)
+
+  objective_metric: MCC
+
+  loss_function: CrossEntropyLoss
+
+  train_split: 0.4        # Proportion of data used for training, rest is for validation/testing
+  validation_split: 0.3   # Proportion of data used for validation from the non-training set
+  test_split: 0.3         # Proportion of data used for testing from the non-training set
+
+  batchNorm:
+    enabled:
+      type: bool
+      default: true
+    type:
+      - BatchNorm2d
+      - LayerNorm
+      - InstanceNorm2d
+
+  activation_functions:
+    type:
+      - ReLU
+      - LeakyReLU
+      - ELU
+      - SELU
+      - GELU
+      - TANH
+
+  min_feature_size: 3 # Minimum size the feature map can be reduced to via pooling, resnet-18 is set to 7x7
+
+  pooling:
+    enabled:
+      type: bool
+      default: true
+    type:
+      - MaxPool2d
+      - AvgPool2d
+    kernel_size:
+      type: int
+      low: 2
+      high: 4
+    stride:
+      type: int
+      low: 1
+      high: 3
+
+  n_trials: 100
+  timeout: 3600  # in seconds, set to 1 hour
+
+  n_conv_layers:
+    type: int
+    low: 1
+    high: 5
+  
+  n_filters:
+    type: int
+    low: 8
+    high: 128
+
+  kernel_size:
+    type: int
+    low: 3
+    high: 7
+  
+  learning_rate_schedule:
+    type:
+      - constant
+      - step
+      - exponential
+      - cosine
+
+  learning_rate:
+    type: float
+    low: 1e-5
+    high: 1e-1
+    log: true
+  
+  batch_size:
+    type: int
+    low: 4
+    high: 64
+  
+  dropout_rate:
+    type: float
+    low: 0.0
+    high: 0.5
+  
+  weight_decay:
+    type: float
+    low: 1e-6
+    high: 1e-2
+    log: true
+  
+  momentum:
+    type: float
+    low: 0.0
+    high: 0.99
+
+  epochs_per_trial: 50
+  
+  early_stopping:
+    patience: 10
+  
+  checkpoint:
+    log_dir: ./checkpoints
+    log_interval: 10
+    save_best: true
+    metrics_to_monitor:
+      - MCC
+      - ACC
+      - F1
+      - PREC
+      - RECALL
+    
+  matplotlib:
+    plot_dir: ./optuna_plots
+    enabled: true
+    plot_types:
+      - optimization_history
+      - param_importances
+      - slice_plot
+      - contour_plot
+      - parallel_coordinate_plot
+      - metric_validation_history    
+      - confidence_matrix
