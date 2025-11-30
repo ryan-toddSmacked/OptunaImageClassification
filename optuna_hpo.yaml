@@ -62,7 +62,7 @@ optuna:
       low: 1
       high: 3
 
-  n_trials: 100
+  n_trials: 50
   timeout: 3600  # in seconds, set to 1 hour
 
   n_conv_layers:
@@ -114,7 +114,7 @@ optuna:
     low: 0.0
     high: 0.99
 
-  epochs_per_trial: 50
+  epochs_per_trial: 20
   
   early_stopping:
     patience: 10
@@ -129,16 +129,28 @@ optuna:
       - F1
       - PREC
       - RECALL
+    save_last: true
+    save_metric_data: true
+    epoch_data_frequency: 1  # Frequency (in epochs) to record data for checkpointing
     
   matplotlib:
-    plot_dir: ./optuna_plots
-    enabled: true
-    plot_each_checkpoint: true
-    plot_types:
-      - optimization_history
-      - param_importances
-      - slice_plot
-      - contour_plot
-      - parallel_coordinate_plot
-      - metric_validation_history    
-      - confidence_matrix
+    optuna_results:
+      plot_dir: ./optuna_plots
+      enabled: true
+      plot_types:
+        - optimization_history
+        - param_importances
+    training_curves:
+      plot_dir: ./training_plots
+      enabled: true
+      plot_stacked_metric_with_loss: true
+      epoch_data_frequency: 1  # Frequency (in epochs) to record data for plotting
+      plot_types:
+        - MCC
+        - ACC
+        - F1
+        - PREC
+        - RECALL
+      plot_each_trial: true  # Seperate plots into trial subfolders
+
+

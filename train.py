@@ -19,6 +19,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from tqdm import tqdm
+import warnings
+
+# Suppress Optuna experimental warnings
+warnings.filterwarnings('ignore', category=optuna.exceptions.ExperimentalWarning)
+# Suppress matplotlib warnings about identical axis limits
+warnings.filterwarnings('ignore', message='Attempting to set identical low and high xlims')
+
+# Suppress Optuna logging warnings about unique value length
+import logging
+optuna.logging.set_verbosity(optuna.logging.WARNING)
+logging.getLogger('optuna').setLevel(logging.ERROR)
 
 
 class DynamicCNN(nn.Module):
@@ -414,12 +425,50 @@ def objective(trial, config, train_dataset, val_dataset, num_classes, device):
     
     metric_name = config['objective_metric']
     
+    # Initialize history for tracking
+    history = {
+        'train_loss': [],
+        'val_loss': [],
+        'train_MCC': [],
+        'val_MCC': [],
+        'train_ACC': [],
+        'val_ACC': [],
+        'train_F1': [],
+        'val_F1': [],
+        'train_PREC': [],
+        'val_PREC': [],
+        'train_RECALL': [],
+        'val_RECALL': []
+    }
+    
+    # Use checkpoint config for data frequency if save_metric_data is enabled
+    if config['checkpoint'].get('save_metric_data', False):
+        epoch_data_frequency = config['checkpoint'].get('epoch_data_frequency', 1)
+    else:
+        # Fall back to matplotlib config for plotting only
+        epoch_data_frequency = config['matplotlib']['training_curves'].get('epoch_data_frequency', 1)
+    
     for epoch in range(config['epochs_per_trial']):
         train_metrics = train_epoch(model, train_loader, criterion, optimizer, device)
         val_metrics, _, _ = validate(model, val_loader, criterion, device)
         
         if scheduler:
             scheduler.step()
+        
+        # Record metrics at specified frequency
+        if epoch % epoch_data_frequency == 0 or epoch == config['epochs_per_trial'] - 1:
+            history['train_loss'].append(train_metrics['loss'])
+            history['val_loss'].append(val_metrics['loss'])
+            history['train_MCC'].append(train_metrics['MCC'])
+            history['val_MCC'].append(val_metrics['MCC'])
+            history['train_ACC'].append(train_metrics['ACC'])
+            history['val_ACC'].append(val_metrics['ACC'])
+            history['train_F1'].append(train_metrics['F1'])
+            history['val_F1'].append(val_metrics['F1'])
+            history['train_PREC'].append(train_metrics['PREC'])
+            history['val_PREC'].append(val_metrics['PREC'])
+            history['train_RECALL'].append(train_metrics['RECALL'])
+            history['val_RECALL'].append(val_metrics['RECALL'])
         
         current_metric = val_metrics[metric_name]
         
@@ -438,62 +487,163 @@ def objective(trial, config, train_dataset, val_dataset, num_classes, device):
             # Save best model
             checkpoint_dir = Path(config['base_output_dir']) / Path(config['checkpoint']['log_dir']).name
             checkpoint_dir.mkdir(parents=True, exist_ok=True)
-            torch.save({
+            
+            checkpoint_data = {
                 'trial_number': trial.number,
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'metrics': val_metrics,
                 'params': trial.params
-            }, checkpoint_dir / f'trial_{trial.number}_best.pt')
+            }
+            
+            # Add history if save_metric_data is enabled
+            if config['checkpoint'].get('save_metric_data', False):
+                checkpoint_data['history'] = history
+            
+            torch.save(checkpoint_data, checkpoint_dir / f'trial_{trial.number}_best.pt')
         else:
             patience_counter += 1
             if patience_counter >= patience:
                 print(f"Early stopping at epoch {epoch}")
                 break
     
+    # Save last checkpoint if enabled
+    if config['checkpoint'].get('save_last', False):
+        checkpoint_dir = Path(config['base_output_dir']) / Path(config['checkpoint']['log_dir']).name
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        
+        checkpoint_data = {
+            'trial_number': trial.number,
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'metrics': val_metrics,
+            'params': trial.params
+        }
+        
+        # Add history if save_metric_data is enabled
+        if config['checkpoint'].get('save_metric_data', False):
+            checkpoint_data['history'] = history
+        
+        torch.save(checkpoint_data, checkpoint_dir / f'trial_{trial.number}_last.pt')
+    
+    # Plot training curves after trial completes
+    plot_training_curves(trial.number, history, config)
+    
     return best_metric
 
 
 def create_plots(study, config):
     """Create Optuna visualization plots."""
-    if not config['matplotlib']['enabled']:
+    if not config['matplotlib']['optuna_results']['enabled']:
         return
     
-    plot_dir = Path(config['base_output_dir']) / Path(config['matplotlib']['plot_dir']).name
+    plot_dir = Path(config['base_output_dir']) / Path(config['matplotlib']['optuna_results']['plot_dir']).name
     plot_dir.mkdir(parents=True, exist_ok=True)
     
-    plot_types = config['matplotlib']['plot_types']
+    plot_types = config['matplotlib']['optuna_results']['plot_types']
     
     try:
         if 'optimization_history' in plot_types:
             fig = optuna.visualization.matplotlib.plot_optimization_history(study)
-            plt.savefig(plot_dir / 'optimization_history.png')
+            plt.tight_layout()
+            plt.savefig(plot_dir / 'optimization_history.png', dpi=150, bbox_inches='tight')
             plt.close()
         
         if 'param_importances' in plot_types and len(study.trials) > 1:
             fig = optuna.visualization.matplotlib.plot_param_importances(study)
-            plt.savefig(plot_dir / 'param_importances.png')
+            # Adjust figure size and layout to prevent label cutoff
+            # Get the current figure if fig is an Axes object
+            if hasattr(fig, 'figure'):
+                fig = fig.figure
+            fig.set_size_inches(10, max(6, len(study.best_params) * 0.4))
+            plt.tight_layout()
+            plt.savefig(plot_dir / 'param_importances.png', dpi=150, bbox_inches='tight')
             plt.close()
         
-        if 'slice_plot' in plot_types:
-            fig = optuna.visualization.matplotlib.plot_slice(study)
-            plt.savefig(plot_dir / 'slice_plot.png')
-            plt.close()
-        
-        if 'contour_plot' in plot_types and len(study.trials) > 1:
-            fig = optuna.visualization.matplotlib.plot_contour(study)
-            plt.savefig(plot_dir / 'contour_plot.png')
-            plt.close()
-        
-        if 'parallel_coordinate_plot' in plot_types:
-            fig = optuna.visualization.matplotlib.plot_parallel_coordinate(study)
-            plt.savefig(plot_dir / 'parallel_coordinate.png')
-            plt.close()
-        
-        print(f"Plots saved to {plot_dir}")
+        print(f"Optuna plots saved to {plot_dir}")
     except Exception as e:
         print(f"Error creating plots: {e}")
+
+
+def plot_training_curves(trial_number, history, config):
+    """Plot training curves for a trial."""
+    if not config['matplotlib']['training_curves']['enabled']:
+        return
+    
+    plot_dir = Path(config['base_output_dir']) / Path(config['matplotlib']['training_curves']['plot_dir']).name
+    
+    # Create trial subfolder if enabled
+    if config['matplotlib']['training_curves'].get('plot_each_trial', True):
+        plot_dir = plot_dir / f'trial_{trial_number}'
+    
+    plot_dir.mkdir(parents=True, exist_ok=True)
+    
+    plot_types = config['matplotlib']['training_curves']['plot_types']
+    plot_stacked = config['matplotlib']['training_curves'].get('plot_stacked_metric_with_loss', True)
+    
+    epochs = list(range(1, len(history['train_loss']) + 1))
+    
+    # Plot loss
+    plt.figure(figsize=(10, 6))
+    plt.plot(epochs, history['train_loss'], label='Train Loss', marker='o')
+    plt.plot(epochs, history['val_loss'], label='Validation Loss', marker='s')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title(f'Trial {trial_number} - Training Loss')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(plot_dir / 'loss.png', dpi=150)
+    plt.close()
+    
+    # Plot each metric
+    for metric in plot_types:
+        train_key = f'train_{metric}'
+        val_key = f'val_{metric}'
+        
+        if val_key in history and train_key in history:
+            if plot_stacked:
+                # Stacked plot with loss and metric
+                fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
+                
+                # Loss subplot
+                ax1.plot(epochs, history['train_loss'], label='Train Loss', marker='o')
+                ax1.plot(epochs, history['val_loss'], label='Validation Loss', marker='s')
+                ax1.set_xlabel('Epoch')
+                ax1.set_ylabel('Loss')
+                ax1.set_title(f'Trial {trial_number} - Training Loss')
+                ax1.legend()
+                ax1.grid(True, alpha=0.3)
+                
+                # Metric subplot
+                ax2.plot(epochs, history[train_key], label=f'Train {metric}', marker='o', color='blue')
+                ax2.plot(epochs, history[val_key], label=f'Validation {metric}', marker='s', color='green')
+                ax2.set_xlabel('Epoch')
+                ax2.set_ylabel(metric)
+                ax2.set_title(f'Trial {trial_number} - {metric}')
+                ax2.legend()
+                ax2.grid(True, alpha=0.3)
+                
+                plt.tight_layout()
+                plt.savefig(plot_dir / f'{metric}_with_loss.png', dpi=150)
+                plt.close()
+            else:
+                # Individual metric plot
+                plt.figure(figsize=(10, 6))
+                plt.plot(epochs, history[train_key], label=f'Train {metric}', marker='o', color='blue')
+                plt.plot(epochs, history[val_key], label=f'Validation {metric}', marker='s', color='green')
+                plt.xlabel('Epoch')
+                plt.ylabel(metric)
+                plt.title(f'Trial {trial_number} - {metric}')
+                plt.legend()
+                plt.grid(True, alpha=0.3)
+                plt.tight_layout()
+                plt.savefig(plot_dir / f'{metric}.png', dpi=150)
+                plt.close()
+    
+    print(f"Training curves saved to {plot_dir}")
 
 
 def main():
@@ -525,25 +675,13 @@ def main():
         pruner=pruner
     )
     
-    # Create callback for plotting after each trial if enabled
-    callbacks = []
-    if config['matplotlib'].get('plot_each_checkpoint', False) and config['matplotlib']['enabled']:
-        def plot_callback(study, trial):
-            """Callback to create plots after each trial."""
-            try:
-                create_plots(study, config)
-            except Exception as e:
-                print(f"Error in plot callback: {e}")
-        callbacks.append(plot_callback)
-    
-    # Optimize
+    # Optimize (no callbacks - Optuna plots only at the end)
     print(f"Starting optimization with {config['n_trials']} trials...")
     study.optimize(
         lambda trial: objective(trial, config, train_dataset, val_dataset, num_classes, device),
         n_trials=config['n_trials'],
         timeout=config.get('timeout'),
-        show_progress_bar=True,
-        callbacks=callbacks if callbacks else None
+        show_progress_bar=True
     )
     
     # Print results
