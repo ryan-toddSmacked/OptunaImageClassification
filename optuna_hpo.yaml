@@ -133,6 +133,7 @@ optuna:
   matplotlib:
     plot_dir: ./optuna_plots
     enabled: true
+    plot_each_checkpoint: true
     plot_types:
       - optimization_history
       - param_importances

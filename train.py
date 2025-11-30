@@ -460,7 +460,7 @@ def create_plots(study, config):
     if not config['matplotlib']['enabled']:
         return
     
-    plot_dir = Path(config['matplotlib']['plot_dir'])
+    plot_dir = Path(config['base_output_dir']) / Path(config['matplotlib']['plot_dir']).name
     plot_dir.mkdir(parents=True, exist_ok=True)
     
     plot_types = config['matplotlib']['plot_types']
@@ -471,7 +471,7 @@ def create_plots(study, config):
             plt.savefig(plot_dir / 'optimization_history.png')
             plt.close()
         
-        if 'param_importances' in plot_types:
+        if 'param_importances' in plot_types and len(study.trials) > 1:
             fig = optuna.visualization.matplotlib.plot_param_importances(study)
             plt.savefig(plot_dir / 'param_importances.png')
             plt.close()
@@ -481,7 +481,7 @@ def create_plots(study, config):
             plt.savefig(plot_dir / 'slice_plot.png')
             plt.close()
         
-        if 'contour_plot' in plot_types:
+        if 'contour_plot' in plot_types and len(study.trials) > 1:
             fig = optuna.visualization.matplotlib.plot_contour(study)
             plt.savefig(plot_dir / 'contour_plot.png')
             plt.close()
@@ -525,13 +525,25 @@ def main():
         pruner=pruner
     )
     
+    # Create callback for plotting after each trial if enabled
+    callbacks = []
+    if config['matplotlib'].get('plot_each_checkpoint', False) and config['matplotlib']['enabled']:
+        def plot_callback(study, trial):
+            """Callback to create plots after each trial."""
+            try:
+                create_plots(study, config)
+            except Exception as e:
+                print(f"Error in plot callback: {e}")
+        callbacks.append(plot_callback)
+    
     # Optimize
     print(f"Starting optimization with {config['n_trials']} trials...")
     study.optimize(
         lambda trial: objective(trial, config, train_dataset, val_dataset, num_classes, device),
         n_trials=config['n_trials'],
         timeout=config.get('timeout'),
-        show_progress_bar=True
+        show_progress_bar=True,
+        callbacks=callbacks if callbacks else None
     )
     
     # Print results
