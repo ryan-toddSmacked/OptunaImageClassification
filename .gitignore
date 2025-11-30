@@ -1,7 +1,6 @@
 # MNIST dataset
 mnist_images/
 data/
-download_mnist.py
 
 # Python virtual environment
 .venv/
